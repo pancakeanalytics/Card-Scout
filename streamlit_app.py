@@ -27,6 +27,12 @@ if not EBAY_APP_ID:
     except Exception:
         EBAY_APP_ID = None
 
+# Small status badge so you know the key is seen by the app
+if EBAY_APP_ID:
+    st.sidebar.success("eBay key loaded")
+else:
+    st.sidebar.warning("No eBay key found (Demo mode recommended)")
+
 # ---------------------------
 # Sidebar: Settings
 # ---------------------------
@@ -49,10 +55,13 @@ with st.sidebar:
     s["tax_pct"]   = st.number_input("Taxes on sale %", 0.0, 20.0, s["tax_pct"], 0.5)
 
     demo_default = EBAY_APP_ID is None
-    DEMO_MODE = st.toggle("Demo mode (no API)", value=demo_default,
-                          help="Use sample data if you don't have an eBay App ID or the API is flaky.")
+    DEMO_MODE = st.toggle(
+        "Demo mode (no API)",
+        value=demo_default,
+        help="Use sample data if you don't have an eBay App ID or the API is flaky."
+    )
     st.divider()
-    st.caption("Tip: add `EBAY_APP_ID` to a local `.env` or Streamlit Secrets to enable the API.")
+    st.caption("Tip: add `EBAY_APP_ID` to a local `.env` or Streamlit Secrets to enable the live API.")
 
 # ---------------------------
 # eBay API client (Finding API)
@@ -247,88 +256,4 @@ with tabs[0]:
         prob_profit = float((net > 0).mean())
         p5, p50, p95 = np.percentile(net, [5, 50, 95])
         st.write(f"**Chance of profit:** {prob_profit:.1%}")
-        st.write(f"**Net profit (P5 / P50 / P95):** ${p5:,.0f} / ${p50:,.0f} / ${p95:,.0f}")
-        st.bar_chart(pd.Series(net, name="Simulated Net Profit"))
-        st.caption("Tweak buy price & fees to see negotiation room.")
-
-# ==== TAB 2: Purchases & Budget ====
-with tabs[1]:
-    st.subheader("💸 Purchases & Budget (Show Mode)")
-    if "purchases" not in st.session_state:
-        st.session_state.purchases = pd.DataFrame(columns=["when", "item", "price", "method", "notes"])
-
-    col = st.columns(5)
-    with col[0]:
-        when = st.date_input("Date")
-    with col[1]:
-        item = st.text_input("Item / card")
-    with col[2]:
-        price = st.number_input("Price ($)", 0.0, 100000.0, 0.0, 1.0)
-    with col[3]:
-        method = st.selectbox("Paid via", ["Cash", "PayPal", "Venmo", "Other"])
-    with col[4]:
-        notes = st.text_input("Notes", "")
-
-    if st.button("Add purchase"):
-        new = {"when": pd.to_datetime(when), "item": item.strip(), "price": float(price),
-               "method": method, "notes": notes.strip()}
-        st.session_state.purchases = pd.concat([st.session_state.purchases, pd.DataFrame([new])], ignore_index=True)
-
-    if not st.session_state.purchases.empty:
-        dfp = st.session_state.purchases.sort_values("when", ascending=False)
-        st.dataframe(dfp, use_container_width=True, hide_index=True)
-        st.metric("Total spent", f"${dfp['price'].sum():,.2f}")
-        by_method = dfp.groupby("method")["price"].sum().sort_values(ascending=False)
-        st.bar_chart(by_method)
-
-# ==== TAB 3: Inventory ====
-with tabs[2]:
-    st.subheader("📦 Inventory Intake")
-    st.caption("Upload CSV with columns like: date_acquired, player, year, set, parallel, grade, cost_basis, sku")
-    up = st.file_uploader("Upload CSV", type=["csv"])
-    if up:
-        inv = pd.read_csv(up)
-        st.dataframe(inv, use_container_width=True)
-        if "cost_basis" in inv.columns:
-            st.metric("Total cost basis", f"${float(inv['cost_basis'].fillna(0).sum()):,.2f}")
-
-# ==== TAB 4: Listing Builder ====
-def title_builder(player, year, card_set, subset, card_no, serial_no, grade, keywords):
-    parts = []
-    if year: parts.append(str(year))
-    if player: parts.append(player)
-    if card_set: parts.append(card_set)
-    if subset: parts.append(subset)
-    if card_no: parts.append(f"#{card_no}")
-    if serial_no: parts.append(serial_no)
-    if grade and grade.lower() != "raw": parts.append(grade)
-    if keywords: parts.append(keywords)
-    return " ".join(parts)[:80]
-
-with tabs[3]:
-    st.subheader("📝 Listing Builder")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        player = st.text_input("Player")
-        year = st.text_input("Year")
-        grade = st.text_input("Grade (e.g., PSA 10 / Raw)", "PSA 10")
-    with c2:
-        card_set = st.text_input("Set (e.g., Prizm, Topps Chrome)")
-        subset = st.text_input("Insert/Parallel (e.g., Silver, Refractor)")
-        card_no = st.text_input("Card #")
-    with c3:
-        serial_no = st.text_input("Serial (e.g., /99)")
-        keywords = st.text_input("Extra keywords (Team, RC, etc.)", "RC")
-        price_anchor = st.number_input("List price anchor ($)", 0.0, 100000.0, 0.0, 1.0)
-
-    title = title_builder(player, year, card_set, subset, card_no, serial_no, grade, keywords)
-    st.text_area("Suggested Title (≤80 chars)", title, height=60)
-
-    bullets = [
-        f"{year} {card_set} {subset}".strip(),
-        f"{player} {('#'+card_no) if card_no else ''} {serial_no}".strip(),
-        f"Condition: {grade}",
-        "Securely shipped in bubble mailer & top loader",
-        "Trusted seller—message for bundle deals"
-    ]
-    st.text_area("Description bullets", "\n• " + "\n• ".join([b for b in bullets if b.strip()]), height=140)
+        st.write(f"**Net pr**
