@@ -1,3 +1,4 @@
+# streamlit_app.py
 import os
 import numpy as np
 import pandas as pd
@@ -41,14 +42,11 @@ if "settings" not in st.session_state:
 
 with st.sidebar:
     st.caption("Default costs for profit calcs")
-    st.session_state.settings["fee_pct"] = st.number_input("Marketplace fee %", 0.0, 25.0,
-                                                           st.session_state.settings["fee_pct"], 0.1)
-    st.session_state.settings["fixed_fee"] = st.number_input("Fixed fee $", 0.0, 5.0,
-                                                             st.session_state.settings["fixed_fee"], 0.05)
-    st.session_state.settings["shipping"] = st.number_input("Ship & supplies $", 0.0, 50.0,
-                                                            st.session_state.settings["shipping"], 0.25)
-    st.session_state.settings["tax_pct"] = st.number_input("Taxes on sale %", 0.0, 20.0,
-                                                           st.session_state.settings["tax_pct"], 0.5)
+    s = st.session_state.settings
+    s["fee_pct"]   = st.number_input("Marketplace fee %", 0.0, 25.0, s["fee_pct"], 0.1)
+    s["fixed_fee"] = st.number_input("Fixed fee $", 0.0, 5.0, s["fixed_fee"], 0.05)
+    s["shipping"]  = st.number_input("Ship & supplies $", 0.0, 50.0, s["shipping"], 0.25)
+    s["tax_pct"]   = st.number_input("Taxes on sale %", 0.0, 20.0, s["tax_pct"], 0.5)
 
     demo_default = EBAY_APP_ID is None
     DEMO_MODE = st.toggle("Demo mode (no API)", value=demo_default,
@@ -57,9 +55,10 @@ with st.sidebar:
     st.caption("Tip: add `EBAY_APP_ID` to a local `.env` or Streamlit Secrets to enable the API.")
 
 # ---------------------------
-# HTTP session for eBay
+# eBay API client (Finding API)
 # ---------------------------
 FINDING_ENDPOINT = "https://svcs.ebay.com/services/search/FindingService/v1"
+CATEGORY_ID_FORCED = "261328"  # Sports Trading Cards Singles
 
 def _session():
     s = requests.Session()
@@ -73,25 +72,24 @@ def _session():
     return s
 
 @st.cache_data(ttl=900, show_spinner=False)
-def ebay_find_completed_items(query: str,
-                              entries_per_page: int = 50,
-                              page: int = 1,
-                              category_id: str | None = None) -> pd.DataFrame:
-    """Find sold/completed via eBay Finding API (SOA headers with param fallback)."""
+def ebay_find_completed_items_last10(query: str) -> pd.DataFrame:
+    """
+    Return the 10 most recent SOLD/completed items for the query,
+    restricted to Sports Trading Cards Singles (261328).
+    Tries SOA headers first, then param-style fallback.
+    """
     base_params = {
         "keywords": query,
-        "paginationInput.entriesPerPage": entries_per_page,
-        "paginationInput.pageNumber": page,
+        "paginationInput.entriesPerPage": 10,       # hard limit
+        "paginationInput.pageNumber": 1,
         "itemFilter(0).name": "SoldItemsOnly",
         "itemFilter(0).value(0)": "true",
         "sortOrder": "EndTimeSoonest",
+        "categoryId": CATEGORY_ID_FORCED,
     }
-    if category_id:
-        base_params["categoryId"] = category_id
 
     s = _session()
 
-    # Try header-based call
     headers = {
         "X-EBAY-SOA-OPERATION-NAME": "findCompletedItems",
         "X-EBAY-SOA-SERVICE-VERSION": "1.13.0",
@@ -101,8 +99,9 @@ def ebay_find_completed_items(query: str,
         "X-EBAY-SOA-GLOBAL-ID": "EBAY-US",
     }
     r = s.get(FINDING_ENDPOINT, headers=headers, params=base_params, timeout=20)
+
+    # Fallback if needed
     if r.status_code >= 500:
-        # Fallback to classic param style
         params_alt = {
             "OPERATION-NAME": "findCompletedItems",
             "SERVICE-VERSION": "1.13.0",
@@ -140,7 +139,12 @@ def ebay_find_completed_items(query: str,
                 })
         except Exception:
             continue
-    return pd.DataFrame(rows).sort_values("date")
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # ensure it's the 10 most recent; display chronologically
+    return df.sort_values("date", ascending=False).head(10).sort_values("date")
 
 # ---------------------------
 # Monte Carlo helpers
@@ -163,7 +167,7 @@ def monte_carlo(prices, n_iter=10000, recency="exp", noise_pct=2.0):
     return sim * (1 + noise)
 
 # ---------------------------
-# Demo data (offline / API down)
+# Demo data (offline/API down)
 # ---------------------------
 DEMO_DF = pd.DataFrame({
     "date": pd.date_range(end=pd.Timestamp.today(), periods=15, freq="2D"),
@@ -178,20 +182,15 @@ DEMO_DF = pd.DataFrame({
 # ---------------------------
 tabs = st.tabs(["🔎 Quick Comps", "💸 Purchases & Budget", "📦 Inventory", "📝 Listing Builder"])
 
-# ==== TAB 1: Quick Comps ====
+# ==== TAB 1: Quick Comps (forced category, last 10) ====
 with tabs[0]:
-    st.subheader("🔎 eBay Sold Comps → Monte Carlo")
+    st.subheader("🔎 eBay Sold Comps → Monte Carlo (Last 10 · Singles category)")
     if "q" not in st.session_state:
         st.session_state.q = "2020 Prizm Justin Herbert Silver PSA 10"
 
     with st.form("search", clear_on_submit=False):
         q = st.text_input("Search sold/completed for", value=st.session_state.q)
-        c1, c2 = st.columns([1,1])
-        with c1:
-            items = st.select_slider("Items", options=[50, 100], value=50)
-        with c2:
-            category_id = st.text_input("Category ID (optional)", placeholder="e.g., 261328")
-        submitted = st.form_submit_button("Fetch via eBay API")
+        submitted = st.form_submit_button("Fetch last 10 via eBay API")
 
     st.session_state.q = q
     comp_df = pd.DataFrame()
@@ -200,25 +199,27 @@ with tabs[0]:
         if not q.strip() or len(q.strip()) < 3:
             st.warning("Please enter at least 3 characters.")
         else:
-            ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(q.strip())}&LH_Sold=1&LH_Complete=1"
+            ebay_url = (
+                "https://www.ebay.com/sch/i.html"
+                f"?_nkw={quote_plus(q.strip())}&LH_Sold=1&LH_Complete=1&_sacat={CATEGORY_ID_FORCED}"
+            )
             try:
                 if DEMO_MODE or not EBAY_APP_ID:
-                    comp_df = DEMO_DF.copy()
-                    st.info("Demo mode: showing sample data. Add EBAY_APP_ID to query the live API.")
+                    comp_df = DEMO_DF.copy().sort_values("date", ascending=False).head(10).sort_values("date")
+                    st.info("Demo mode: showing 10 sample sales. Add EBAY_APP_ID to hit the live API.")
                 else:
                     with st.spinner("Calling eBay…"):
-                        comp_df = ebay_find_completed_items(q.strip(), int(items), 1, category_id or None)
-            except Exception as e:
-                st.error(f"eBay error: {e}")
+                        comp_df = ebay_find_completed_items_last10(q.strip())
+            except Exception:
+                st.info("API isn’t reachable right now; showing 10 sample sales so you can continue.")
                 st.markdown(f"[Open this search on eBay (sold/completed)]({ebay_url})")
-                comp_df = DEMO_DF.copy()
-                st.info("Loaded demo data so you can keep testing the workflow.")
+                comp_df = DEMO_DF.copy().sort_values("date", ascending=False).head(10).sort_values("date")
 
     if not comp_df.empty:
-        st.success(f"Loaded {len(comp_df)} sold/ended results")
+        st.success(f"Loaded {len(comp_df)} sold/ended results (Singles category)")
         st.dataframe(comp_df[["date", "price", "title", "url"]], use_container_width=True, hide_index=True)
-        st.download_button("Download CSV", comp_df.to_csv(index=False).encode("utf-8"),
-                           file_name="ebay_comps.csv", mime="text/csv")
+        st.download_button("Download CSV (last 10)", comp_df.to_csv(index=False).encode("utf-8"),
+                           file_name="ebay_comps_last10.csv", mime="text/csv")
 
         # Stats
         p = comp_df["price"].dropna().astype(float)
