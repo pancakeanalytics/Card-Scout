@@ -1,0 +1,8 @@
+streamlit>=1.35
+pandas>=2.2
+numpy>=1.26
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+fake-useragent>=1.4   # rotate UAs if needed
+tenacity>=8.2         # simple retry decorators
